@@ -1,6 +1,12 @@
-import { axios, getApiUrl, getAuthConfig, getRequiredAuthToken, handleError } from './http'
+import {
+  axios,
+  getApiUrl,
+  getAuthConfig,
+  getRequiredAuthToken,
+  handleError,
+  notifyResultError,
+} from './http'
 import { setAuthToken } from '@/utils/functions'
-import { showMessage } from '@/utils/message'
 
 export async function updateUserData(userData) {
   try {
@@ -21,10 +27,10 @@ export async function updateUserData(userData) {
       return true
     }
 
-    showMessage('更新账号资料失败！', 'error')
+    notifyResultError(response.data, '更新账号资料失败！')
     return false
   } catch (error) {
-    handleError(error)
+    handleError(error, '更新账号资料失败！')
     return false
   }
 }
@@ -44,7 +50,7 @@ export async function getUserData() {
 
     return null
   } catch (error) {
-    handleError(error)
+    handleError(error, '获取账号资料失败！')
     return null
   }
 }

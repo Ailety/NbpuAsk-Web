@@ -1,6 +1,5 @@
-import { axios, getApiUrl, getAuthConfig, handleError } from './http'
+import { axios, getApiUrl, getAuthConfig, handleError, notifyResultError } from './http'
 import { setConversationShares } from '@/utils/functions'
-import { showMessage } from '@/utils/message'
 
 export async function getConversationShares() {
   try {
@@ -12,11 +11,11 @@ export async function getConversationShares() {
       return shares
     }
 
-    showMessage('获取分享状态失败！', 'error')
+    notifyResultError(response.data, '获取分享状态失败！')
     setConversationShares([])
     return []
   } catch (error) {
-    handleError(error)
+    handleError(error, '获取分享状态失败！')
     setConversationShares([])
     return []
   }
@@ -33,7 +32,7 @@ export async function getSharedConversation(conversationId) {
 
     return null
   } catch (error) {
-    handleError(error)
+    handleError(error, '分享对话不可用。', { silent: true })
     return null
   }
 }
@@ -53,10 +52,10 @@ export async function createConversationShare(conversation, shareId) {
       return response.data.data
     }
 
-    showMessage('对话分享失败，请稍后重试。', 'error', 2)
+    notifyResultError(response.data, '对话分享失败，请稍后重试。', { duration: 2 })
     return null
   } catch (error) {
-    handleError(error)
+    handleError(error, '对话分享失败，请稍后重试。', { duration: 2 })
     return null
   }
 }
@@ -75,10 +74,10 @@ export async function cancelConversationShare(conversation) {
       return true
     }
 
-    showMessage('对话取消分享失败，请稍后重试。', 'error', 2)
+    notifyResultError(response.data, '对话取消分享失败，请稍后重试。', { duration: 2 })
     return false
   } catch (error) {
-    handleError(error)
+    handleError(error, '对话取消分享失败，请稍后重试。', { duration: 2 })
     return false
   }
 }

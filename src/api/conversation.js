@@ -1,4 +1,4 @@
-import { axios, getApiUrl, getAuthConfig, handleError } from './http'
+import { axios, getApiUrl, getAuthConfig, handleError, notifyResultError } from './http'
 import { getConversationShares } from './share'
 import {
   addLocalConv,
@@ -40,15 +40,15 @@ export async function getConversations() {
       return conversations
     }
 
-    showMessage('获取对话列表失败！', 'error')
+    notifyResultError(response.data, '获取对话列表失败！')
     return []
   } catch (error) {
-    handleError(error)
+    handleError(error, '获取对话列表失败！')
     return []
   }
 }
 
-export async function getConversation(conversation) {
+export async function getConversation(conversation, options = {}) {
   try {
     const response = await axios.post(
       getApiUrl('/conversation/get'),
@@ -59,10 +59,10 @@ export async function getConversation(conversation) {
       return response.data.data
     }
 
-    showMessage('获取对话数据失败！', 'error')
+    notifyResultError(response.data, '获取对话数据失败！', options)
     return null
   } catch (error) {
-    handleError(error)
+    handleError(error, '获取对话数据失败！', options)
     return null
   }
 }
@@ -78,10 +78,10 @@ export async function setConversation(conversation) {
       return true
     }
 
-    showMessage('同步对话数据失败！', 'error')
+    notifyResultError(response.data, '同步对话数据失败！')
     return false
   } catch (error) {
-    handleError(error)
+    handleError(error, '同步对话数据失败！')
     return false
   }
 }
@@ -96,10 +96,10 @@ export async function createConversation() {
       return newConversation
     }
 
-    showMessage('创建对话失败！', 'error')
+    notifyResultError(response.data, '创建对话失败！')
     return null
   } catch (error) {
-    handleError(error)
+    handleError(error, '创建对话失败！')
     return null
   }
 }
@@ -108,6 +108,7 @@ export async function renameConversation(index, newTitle) {
   try {
     const conversation = getLocalConvs()[index]
     conversation.conversationData.title = newTitle
+    conversation.conversationData.titleStatus = 'MANUAL'
     const response = await axios.post(
       getApiUrl('/conversation/set'),
       getConversationSavePayload(conversation),
@@ -116,13 +117,14 @@ export async function renameConversation(index, newTitle) {
     if (response.data.success) {
       const conversations = getLocalConvs()
       conversations[index].conversationData.title = newTitle
+      conversations[index].conversationData.titleStatus = 'MANUAL'
       setLocalConvs(conversations)
       showMessage('重命名对话成功！', 'success')
     } else {
-      showMessage('重命名对话失败！', 'error')
+      notifyResultError(response.data, '重命名对话失败！')
     }
   } catch (error) {
-    handleError(error)
+    handleError(error, '重命名对话失败！')
   }
 }
 
@@ -142,10 +144,10 @@ export async function deleteConversation(index) {
       setCurConvIndex(-1)
       showMessage('删除成功！', 'success')
     } else {
-      showMessage('删除对话失败！', 'error')
+      notifyResultError(response.data, '删除对话失败！')
     }
   } catch (error) {
-    handleError(error)
+    handleError(error, '删除对话失败！')
   }
 }
 
@@ -159,10 +161,10 @@ export async function deleteAllConversations() {
       return true
     }
 
-    showMessage('删除所有对话失败！', 'error')
+    notifyResultError(response.data, '删除所有对话失败！')
     return false
   } catch (error) {
-    handleError(error)
+    handleError(error, '删除所有对话失败！')
     return false
   }
 }

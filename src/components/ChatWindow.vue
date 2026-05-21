@@ -19,7 +19,7 @@
       </div>
     </div>
 
-    <div ref="chatWindowRoot" class="chat-window" :class="{ 'welcome-mode': isWelcomeMode }">
+    <div class="chat-window" :class="{ 'welcome-mode': isWelcomeMode }">
       <div ref="welcomeElements" class="welcome-elements" v-if="isWelcomeMode">
         <div class="welcome-content">
           <div class="welcome-logo">
@@ -42,32 +42,22 @@
         </div>
       </div>
 
-      <div class="chat-area" :class="{ 'fade-out': isWelcomeMode }">
-        <div class="chat-header">
-          <div class="chat-title-shell" :class="{ 'is-title-editing': isTitleEditing }">
-            <div class="chat-title-frame" :style="titleFrameStyle" @click.stop="startTitleEdit">
-              <input
-                v-if="isTitleEditing"
-                ref="titleInput"
-                v-model="titleDraft"
-                class="chat-title-input"
-                maxlength="10"
-                @click.stop
-                @blur="commitTitleEdit"
-                @keydown.enter.prevent="commitTitleEdit"
-                @keydown.esc.prevent="cancelTitleEdit"
-              />
-              <h2 v-else class="chat-title">{{ curConvTitle }}</h2>
-            </div>
-            <div v-if="chatSubtitle" class="chat-subtitle">{{ chatSubtitle }}</div>
-          </div>
-        </div>
+      <div
+        class="chat-area"
+        :class="{ 'fade-out': isWelcomeMode, 'is-status-hidden': isConversationStatusMode }"
+      >
+        <ChatTitleBar
+          :title="curConvTitle"
+          :subtitle="chatSubtitle"
+          :editable="hasActiveConversation"
+          @rename="renameTitle"
+        />
         <div class="chat-masking chat-header-masking"></div>
 
         <div
           ref="chatMessages"
           class="chat-messages"
-          :class="{ 'is-preparing-conversation': showConversationLoading }"
+          :class="{ 'is-preparing-conversation': shouldDisplayConversationLoading }"
           @scroll="handleScroll"
           @wheel.passive="handleUserScrollIntent"
           @pointerdown="handleUserScrollIntent"
@@ -90,46 +80,27 @@
             enable-streaming-tail
           />
         </div>
-        <transition name="conversation-loading-fade">
-          <div v-if="showConversationLoading" class="conversation-loading-layer">
-            <div class="conversation-loading-card">
-              <span class="conversation-loading-orbit" aria-hidden="true"></span>
-              <div class="conversation-loading-copy">
-                <div class="conversation-loading-title">正在加载对话数据……</div>
-                <div class="conversation-loading-subtitle">即将为你定位到最新内容</div>
-              </div>
-            </div>
-          </div>
-        </transition>
         <div class="chat-masking chat-footer-masking"></div>
       </div>
 
-      <div class="chat-input">
-        <div class="input-frame">
-          <textarea
-            ref="messageInput"
-            id="newMessageInput"
-            v-model="newMessage"
-            @input="adjustTextareaHeight"
-            @keydown.enter="handleKeyDown"
-            placeholder="给 宁青千问 发送消息"
-            rows="3"
-          ></textarea>
-        </div>
-        <div
-          class="send-button-wrap"
-          @mouseenter="showTooltip($event, inputBtnTip)"
-          @mouseleave="hideTooltip"
-        >
-          <button @click="sendMessage" :disabled="!canSendMessage">
-            <div class="send-icon">
-              <SendMsgBtn />
-            </div>
-          </button>
-        </div>
-      </div>
+      <ChatStatusLayer
+        fullscreen
+        :loading="shouldDisplayConversationLoading"
+        :error="shouldDisplayConversationError"
+      />
 
-      <p v-if="hasActiveConversation" class="copyright-text">
+      <ChatInputBox
+        ref="chatInput"
+        v-model="newMessage"
+        :class="{ 'is-status-reserved': isConversationStatusMode }"
+        :disabled="!canSendMessage"
+        :tooltip-text="inputBtnTip"
+        @send="sendMessage"
+        @show-tooltip="showTooltip"
+        @hide-tooltip="hideTooltip"
+      />
+
+      <p v-if="hasActiveConversation && !isConversationStatusMode" class="copyright-text">
         {{ copyrightText }} | 宁青千问 是一款 AI 工具，其回答未必正确无误
       </p>
 
@@ -147,8 +118,10 @@ import { useStore } from 'vuex'
 import ExpandBtn from '@/components/icons/ChatWindow/expandBtn.vue'
 import NewChatBtn from '@/components/icons/ChatWindow/newChatBtnS.vue'
 import ScrollBottomBtn from '@/components/icons/ChatWindow/scrollBottomBtn.vue'
-import SendMsgBtn from '@/components/icons/ChatWindow/sendMsgBtn.vue'
 import ConversationMessage from '@/components/messages/ConversationMessage.vue'
+import ChatStatusLayer from '@/components/ChatStatusLayer.vue'
+import ChatTitleBar from '@/components/ChatTitleBar.vue'
+import ChatInputBox from '@/components/ChatInputBox.vue'
 import {
   getLocalConvs,
   getCurConvTitle,
@@ -159,15 +132,17 @@ import {
   getAuthToken,
   formatDate,
   getConvStatusByTimestamp,
+  updateLocalConvById,
 } from '@/utils/functions'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { createConversation, renameConversation } from '@/api/conversation'
-import { showMessage } from '@/utils/message'
+import { createConversation, getConversation, renameConversation } from '@/api/conversation'
+import { resolveResultErrorMessage } from '@/api/http'
 import { isThinkingMessage } from '@/utils/messageRendering'
 import {
   CHAT_RUN_STATE,
   CHAT_VIEW_STATE,
   isChatRunBusyState,
+  isConversationErrorState,
   isConversationLoadingState,
   isWelcomeState,
 } from '@/utils/chatStateMachine'
@@ -195,13 +170,9 @@ const newMessage = ref('')
 const showScrollButton = ref(false)
 const chatRunState = ref(CHAT_RUN_STATE.IDLE)
 const modelAnswerIndex = ref(-1)
-const messageInput = ref(null)
+const chatInput = ref(null)
 const chatMessages = ref(null)
-const titleInput = ref(null)
 const welcomeElements = ref(null)
-const chatWindowRoot = ref(null)
-const isTitleEditing = ref(false)
-const titleDraft = ref('')
 const elapsedNow = ref(Date.now())
 const showConversationLoading = ref(false)
 const welcomeSnapshotVisible = ref(false)
@@ -218,6 +189,8 @@ let isConversationLoadingHidePending = false
 
 const AUTO_SCROLL_THRESHOLD = 220
 const SCROLL_BUTTON_THRESHOLD = 70
+const TITLE_GENERATING_STATUS = 'GENERATING'
+const AUTO_TITLE_REFRESH_DELAYS = [350, 700, 1000, 1800, 2600]
 const CONVERSATION_LOADING_MIN_MS = computed(() => store.state.CONVERSATION_LOADING_MIN_MS)
 const welcomeTitles = [
   '有什么我可以帮你的？',
@@ -230,13 +203,23 @@ const welcomeTitle = ref(welcomeTitles[Math.floor(Math.random() * welcomeTitles.
 
 const isSidebarCollapsed = computed(() => props.sidebarCollapsed || store.state.sidebarCollapsed)
 const copyrightText = computed(() => store.state.copyrightText)
+const wantsConversationLoading = computed(() => isConversationLoadingState(props.viewState))
+const wantsConversationError = computed(() => isConversationErrorState(props.viewState))
+const shouldDisplayConversationLoading = computed(
+  () => wantsConversationLoading.value || showConversationLoading.value,
+)
+const shouldDisplayConversationError = computed(
+  () => wantsConversationError.value && !shouldDisplayConversationLoading.value,
+)
+const isConversationStatusMode = computed(
+  () => shouldDisplayConversationLoading.value || wantsConversationError.value,
+)
 const isWelcomeMode = computed(
   () =>
     isWelcomeState(props.viewState) &&
     !hasActiveConversation.value &&
-    !showConversationLoading.value,
+    !isConversationStatusMode.value,
 )
-const wantsConversationLoading = computed(() => isConversationLoadingState(props.viewState))
 const isModelThinking = computed(() => isChatRunBusyState(chatRunState.value))
 
 watch(
@@ -269,25 +252,13 @@ const chatSubtitle = computed(() => {
 
   return [createdText, lastText].filter(Boolean).join(' · ')
 })
-const titleFrameStyle = computed(() => {
-  const titleText = isTitleEditing.value ? titleDraft.value : curConvTitle.value
-  const titleLength = Math.max(Array.from(titleText || '').length, 4)
-  const hoverWidth = Math.min(480, Math.max(180, titleLength * 34 + 74))
-  const editWidth = Math.min(560, Math.max(320, titleLength * 34 + 128))
-
-  return {
-    '--title-frame-width': `${isTitleEditing.value ? editWidth : hoverWidth}px`,
-  }
-})
-
 function showWelcomeLeaveSnapshot() {
   const rect = welcomeElements.value?.getBoundingClientRect()
-  const rootRect = chatWindowRoot.value?.getBoundingClientRect()
-  if (!rect || !rootRect) return
+  if (!rect) return
 
   welcomeSnapshotStyle.value = {
-    left: `${rect.left - rootRect.left}px`,
-    top: `${rect.top - rootRect.top}px`,
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
     width: `${rect.width}px`,
     height: `${rect.height}px`,
   }
@@ -352,6 +323,16 @@ watch(
 )
 
 watch(
+  wantsConversationError,
+  (shouldShowError) => {
+    if (shouldShowError) {
+      hideConversationLoadingCard()
+    }
+  },
+  { flush: 'sync' },
+)
+
+watch(
   hasActiveConversation,
   () => {
     nextTick(() => {
@@ -384,42 +365,8 @@ function handleScroll(event) {
   }
 }
 
-function startTitleEdit() {
-  if (!hasActiveConversation.value || isTitleEditing.value) return
-
-  titleDraft.value = curConvTitle.value
-  isTitleEditing.value = true
-  nextTick(() => {
-    titleInput.value?.focus()
-    titleInput.value?.select()
-  })
-}
-
-function cancelTitleEdit() {
-  isTitleEditing.value = false
-  titleDraft.value = curConvTitle.value
-}
-
-async function commitTitleEdit() {
-  if (!isTitleEditing.value) return
-
-  const nextTitle = titleDraft.value.trim()
-  const currentTitle = curConvTitle.value
-
-  if (nextTitle === '' || nextTitle === currentTitle) {
-    cancelTitleEdit()
-    return
-  }
-
-  if (nextTitle.length > 10) {
-    showMessage('对话名称不能超过10个字符！', 'error', 2)
-    titleDraft.value = currentTitle
-    isTitleEditing.value = false
-    return
-  }
-
+async function renameTitle(nextTitle) {
   await renameConversation(getCurConvIndex(), nextTitle)
-  isTitleEditing.value = false
 }
 
 function updateScrollButton(container = chatMessages.value) {
@@ -454,6 +401,12 @@ function handleUserScrollIntent() {
 function waitForAnimationFrame() {
   return new Promise((resolve) => {
     window.requestAnimationFrame(resolve)
+  })
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
   })
 }
 
@@ -591,39 +544,43 @@ async function scrollToBottom({ force = true, immediate = false } = {}) {
 }
 
 function adjustTextareaHeight() {
-  const textarea = messageInput.value
-  if (!textarea) return
-
-  textarea.style.transition = 'none'
-  textarea.style.height = 'auto'
-  textarea.offsetHeight
-
-  const lineHeight = 24
-  const minLines = 1
-  const maxLines = 6
-  const minHeight = lineHeight * minLines
-  const maxHeight = lineHeight * maxLines
-
-  let newHeight = textarea.scrollHeight
-
-  if (newHeight < minHeight) {
-    newHeight = minHeight
-  } else if (newHeight > maxHeight) {
-    newHeight = maxHeight
-    textarea.style.overflowY = 'auto'
-  } else {
-    textarea.style.overflowY = 'hidden'
-  }
-
-  textarea.style.height = `${newHeight}px`
-  textarea.offsetHeight
-  textarea.style.transition = ''
+  chatInput.value?.adjustHeight?.()
 }
 
-function handleKeyDown(event) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault()
-    sendMessage()
+function setCurrentModelMessageError(message) {
+  const conv = getCurConv()
+  const modelMessage = conv?.conversationData?.messages?.[modelAnswerIndex.value]
+  if (!modelMessage) return
+
+  modelMessage.message = message
+  modelMessage.isStreaming = false
+  modelMessage.thinking = false
+  setCurConv(conv)
+}
+
+async function refreshConversationAfterRun() {
+  const conversationId = getCurConv()?.conversationId
+  if (!conversationId) return
+
+  for (const delay of AUTO_TITLE_REFRESH_DELAYS) {
+    if (delay > 0) {
+      await wait(delay)
+    }
+
+    if (getCurConv()?.conversationId !== conversationId) {
+      return
+    }
+
+    const latestConversation = await getConversation({ conversationId }, { silent: true })
+    if (!latestConversation || getCurConv()?.conversationId !== conversationId) {
+      return
+    }
+
+    updateLocalConvById(latestConversation)
+
+    if (latestConversation.conversationData?.titleStatus !== TITLE_GENERATING_STATUS) {
+      return
+    }
   }
 }
 
@@ -701,6 +658,13 @@ async function sendMessage() {
         try {
           if (!event.data) return
           const parsed = JSON.parse(event.data)
+          if (parsed.error) {
+            const errorMsg = resolveResultErrorMessage(parsed, '连接中断或服务异常。')
+            setCurrentModelMessageError(errorMsg)
+            abortController.abort()
+            return
+          }
+
           const answerChunk = parsed.text
 
           if (answerChunk) {
@@ -721,7 +685,8 @@ async function sendMessage() {
         console.error('SSE 连接错误或中断: ', err)
         const conv = getCurConv()
         if (!conv.conversationData.messages[modelAnswerIndex.value].message) {
-          conv.conversationData.messages[modelAnswerIndex.value].message = '连接中断或服务异常。'
+          conv.conversationData.messages[modelAnswerIndex.value].message =
+            err?.message || '连接中断或服务异常。'
           setCurConv(conv)
         }
         abortController.abort()
@@ -750,6 +715,10 @@ async function sendMessage() {
         )
       }
       setCurConv(conv)
+      nextTick(() => {
+        scrollToBottom({ force: true })
+      })
+      await refreshConversationAfterRun()
       nextTick(() => {
         scrollToBottom({ force: true })
       })
@@ -918,7 +887,7 @@ defineExpose({
 }
 
 .welcome-leave-snapshot {
-  position: absolute;
+  position: fixed;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -926,108 +895,6 @@ defineExpose({
   box-sizing: border-box;
   pointer-events: none;
   animation: welcome-snapshot-leave 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}
-
-.chat-header {
-  height: 104px;
-  min-height: 104px;
-  box-sizing: border-box;
-  position: relative;
-  z-index: 7;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  text-align: center;
-  padding: 16px 0 10px;
-  background: var(--color-page-bg);
-  color: black;
-  overflow: visible;
-}
-
-.chat-title-shell {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: min(760px, 72vw);
-  min-height: 66px;
-  padding: 0 18px 9px;
-  box-sizing: border-box;
-}
-
-.chat-title-frame {
-  width: var(--title-frame-width, 260px);
-  max-width: min(560px, 62vw);
-  min-height: 49px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 16px 5px;
-  box-sizing: border-box;
-  border: 1px solid transparent;
-  border-radius: 16px;
-  cursor: text;
-  transition:
-    width 0.24s cubic-bezier(0.22, 1, 0.36, 1),
-    background 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    transform 0.2s ease;
-}
-
-.chat-title-frame:hover,
-.chat-title-shell.is-title-editing .chat-title-frame {
-  background: rgba(255, 255, 255, 0.82);
-  border-color: rgba(203, 213, 225, 0.72);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-  transform: translateY(-1px);
-}
-
-.chat-title-shell.is-title-editing .chat-title-frame {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.92));
-  border-color: rgba(59, 130, 246, 0.2);
-  box-shadow:
-    0 12px 32px rgba(37, 99, 235, 0.09),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7);
-}
-
-.chat-title {
-  margin: 0;
-  max-width: 100%;
-  color: var(--color-text-primary);
-  font-size: 30px;
-  font-weight: 800;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-title-input {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0 8px;
-  color: var(--color-text-primary);
-  background: transparent;
-  border: none;
-  outline: none;
-  text-align: center;
-  font-size: 30px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.chat-subtitle {
-  margin-top: 2px;
-  width: max-content;
-  max-width: min(720px, 70vw);
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .chat-masking {
@@ -1105,140 +972,6 @@ defineExpose({
 /* Webkit浏览器自定义滚动条（Chrome, Edge, Safari） */
 .chat-messages.is-preparing-conversation {
   visibility: hidden;
-}
-
-.conversation-loading-layer {
-  position: absolute;
-  top: 104px;
-  left: 0;
-  right: 14px;
-  bottom: 0;
-  z-index: 8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  background: radial-gradient(
-    circle at 50% 42%,
-    rgba(239, 246, 255, 0.8),
-    rgba(252, 252, 252, 0) 44%
-  );
-}
-
-.conversation-loading-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 299px;
-  padding: 17px 21px;
-  color: var(--color-text-secondary);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.9)), #ffffff;
-  border: 1px solid rgba(147, 197, 253, 0.32);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 18px 44px rgba(15, 23, 42, 0.08),
-    0 0 42px rgba(96, 165, 250, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92);
-  animation: conversation-card-float 2.6s ease-in-out infinite;
-}
-
-.conversation-loading-orbit {
-  position: relative;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    var(--color-primary),
-    var(--color-accent),
-    #22c55e,
-    var(--color-primary)
-  );
-  box-shadow: 0 0 18px rgba(37, 99, 235, 0.22);
-  animation: conversation-orbit-spin 1.35s linear infinite;
-}
-
-.conversation-loading-orbit::after {
-  content: '';
-  position: absolute;
-  inset: 7px;
-  border-radius: 50%;
-  background: var(--color-surface);
-  box-shadow: inset 0 0 0 1px rgba(219, 234, 254, 0.95);
-}
-
-.conversation-loading-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.conversation-loading-title {
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1.35;
-  background: linear-gradient(90deg, #334155 0%, #2563eb 36%, #0ea5e9 62%, #334155 100%);
-  background-size: 220% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  animation: conversation-loading-shimmer 2.2s ease-in-out infinite;
-}
-
-.conversation-loading-subtitle {
-  color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.conversation-loading-fade-enter-active,
-.conversation-loading-fade-leave-active {
-  transition:
-    opacity 0.22s ease,
-    transform 0.22s ease,
-    filter 0.22s ease;
-}
-
-.conversation-loading-fade-enter-from,
-.conversation-loading-fade-leave-to {
-  opacity: 0;
-  filter: blur(4px);
-  transform: translateY(8px);
-}
-
-.conversation-loading-fade-enter-to,
-.conversation-loading-fade-leave-from {
-  opacity: 1;
-  filter: blur(0);
-  transform: translateY(0);
-}
-
-@keyframes conversation-orbit-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes conversation-loading-shimmer {
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
-@keyframes conversation-card-float {
-  0%,
-  100% {
-    transform: translateY(-42px);
-  }
-  50% {
-    transform: translateY(-45px);
-  }
 }
 
 .chat-messages::-webkit-scrollbar {
@@ -1353,6 +1086,12 @@ defineExpose({
   pointer-events: none;
 }
 
+.chat-area.is-status-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .chat-window.welcome-mode .chat-area {
   flex: 0 1 0;
   width: 100%;
@@ -1361,155 +1100,32 @@ defineExpose({
   overflow: hidden;
 }
 
-.chat-input {
-  width: 50%;
-  display: flex;
-  position: relative;
-  padding: 0 15px 15px;
-  margin: 0 auto;
-  margin-bottom: 25px;
-  background: transparent;
-  z-index: 10;
-  /* 增加阻尼动画曲线 */
-  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-  transform: translateY(0);
-}
-
-/* 欢迎模式 */
-.chat-window.welcome-mode .chat-input {
-  width: clamp(320px, 50vw, 650px);
-  max-width: min(650px, 100%);
+.chat-window.welcome-mode :deep(.chat-input) {
+  width: clamp(320px, 50vw, 650px) !important;
+  max-width: min(650px, 100%) !important;
+  flex: 0 0 auto;
   margin: 0 auto;
   transform: none;
 }
 
-.input-frame {
-  flex: 1;
-  display: flex;
-  position: relative;
-  border: 1px solid rgba(203, 213, 225, 0.95);
-  border-radius: 22px;
-  padding: 7px 15px 11px 15px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.92)), #ffffff;
-  box-shadow:
-    0 14px 34px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.86);
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background 0.2s ease;
-}
-
-.input-frame:focus-within {
-  border-color: rgba(37, 99, 235, 0.38);
-  background: var(--color-surface);
-  box-shadow:
-    0 18px 40px rgba(37, 99, 235, 0.11),
-    0 0 0 4px rgba(37, 99, 235, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92);
-}
-
-.input-frame textarea {
-  flex: 1;
-  padding: 10px 44px 10px 10px;
-  outline: none;
-  border: none;
-  background: transparent;
-  resize: none;
-  min-height: 24px;
-  max-height: 144px;
-  line-height: 24px;
-  font-size: inherit;
-  color: var(--color-text-primary);
-  overflow-y: hidden;
-  transition: height 0.1s ease;
-}
-
-.input-frame textarea::placeholder {
-  color: var(--color-text-subtle);
-}
-
-.chat-window.welcome-mode .input-frame textarea {
+.chat-window.welcome-mode :deep(.input-frame textarea) {
   min-height: clamp(72px, 12vh, 110px);
   padding-top: clamp(10px, 1.6vh, 15px);
 }
 
-.send-button-wrap {
-  position: absolute;
-  right: 48px;
-  bottom: 39px;
-  display: flex;
-}
-
-.chat-input button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 36%),
-    linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
-  color: white;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  box-shadow:
-    0 10px 22px rgba(37, 99, 235, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32);
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    filter 0.2s ease,
-    background 0.2s ease;
-  align-self: flex-end;
-}
-
-.chat-input button:hover {
-  filter: saturate(1.08);
-  box-shadow:
-    0 14px 28px rgba(37, 99, 235, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.36);
-  transform: translateY(-1px);
-}
-
-.chat-input button:active {
-  transform: translateY(0);
-  box-shadow:
-    0 8px 18px rgba(37, 99, 235, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
-}
-
-.chat-input button:disabled {
-  background: var(--color-border-strong);
-  box-shadow: none;
-  transform: none;
-  cursor: not-allowed;
-}
-
-.chat-window.welcome-mode .chat-input button {
-  position: relative;
-}
-
-.chat-window.welcome-mode .send-button-wrap {
+.chat-window.welcome-mode :deep(.send-button-wrap) {
   right: 36px;
   bottom: 31px;
 }
 
-.send-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  font-size: 16px;
+.chat-window.welcome-mode :deep(.chat-input button) {
+  position: relative;
 }
 
-.input-frame textarea,
-.chat-input button {
-  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+:deep(.chat-input.is-status-reserved) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .copyright-text {

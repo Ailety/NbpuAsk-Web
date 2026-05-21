@@ -53,6 +53,7 @@ const chatViewState = ref(
 )
 const sidebarCollapsed = computed(() => store.state.sidebarCollapsed)
 let conversationLoadingToken = 0
+let conversationLoadingStartedAt = 0
 
 onBeforeMount(async () => {
   setLocalConvs([])
@@ -97,9 +98,9 @@ async function handleRouteId(convId, convsList = null, existingLoadingToken = nu
 
   const index = convs.findIndex((conv) => conv.conversationId === convId)
   if (index === -1) {
+    const loadingToken = existingLoadingToken || beginConversationLoading()
     setCurConvIndex(-1)
-    cancelConversationLoading()
-    router.push('/chat')
+    await showConversationLoadError(loadingToken)
     return
   }
 
@@ -110,7 +111,7 @@ async function handleRouteId(convId, convsList = null, existingLoadingToken = nu
     try {
       await nextTick()
       setCurConvIndex(index)
-      const conversation = await getConversation(convs[index])
+      const conversation = await getConversation(convs[index], { silent: true })
 
       if (
         loadingToken !== conversationLoadingToken ||
@@ -120,12 +121,14 @@ async function handleRouteId(convId, convsList = null, existingLoadingToken = nu
         return
       }
 
-      if (!updateLocalConvById(conversation)) {
+      if (!conversation || !updateLocalConvById(conversation)) {
+        await showConversationLoadError(loadingToken)
         return
       }
 
       const updatedIndex = findLocalConvIndexById(requestedConversationId)
       if (updatedIndex === -1) {
+        await showConversationLoadError(loadingToken)
         return
       }
 
@@ -146,6 +149,7 @@ async function handleRouteId(convId, convsList = null, existingLoadingToken = nu
 
 function beginConversationLoading() {
   const token = ++conversationLoadingToken
+  conversationLoadingStartedAt = performance.now()
   chatViewState.value = CHAT_VIEW_STATE.LOADING_CONVERSATION
   return token
 }
@@ -153,6 +157,32 @@ function beginConversationLoading() {
 function cancelConversationLoading() {
   conversationLoadingToken += 1
   chatViewState.value = resolveStableViewState()
+}
+
+async function showConversationLoadError(loadingToken = null) {
+  if (loadingToken && loadingToken !== conversationLoadingToken) return
+
+  const elapsed = performance.now() - conversationLoadingStartedAt
+  const remaining = Math.max(0, getConversationLoadingMinimumMs() - elapsed)
+  if (remaining > 0) {
+    await wait(remaining)
+  }
+
+  if (loadingToken && loadingToken !== conversationLoadingToken) return
+
+  conversationLoadingToken += 1
+  chatViewState.value = CHAT_VIEW_STATE.CONVERSATION_ERROR
+}
+
+function getConversationLoadingMinimumMs() {
+  const minimumMs = Number(store.state.CONVERSATION_LOADING_MIN_MS)
+  return Number.isFinite(minimumMs) && minimumMs > 0 ? minimumMs : 700
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
 }
 
 function finishConversationLoading(loadingToken) {

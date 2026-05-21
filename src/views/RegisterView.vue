@@ -179,12 +179,14 @@ const handleRegister = async () => {
 
   try {
     const verifyResult = await verifyRegister(registerData)
+    if (!verifyResult) return
     if (!verifyResult?.success) {
       showMessage(`注册失败: ${verifyResult?.message || '未知错误'}`, 'error')
       return
     }
 
     const registerResult = await registerUser(registerData)
+    if (!registerResult) return
     if (!registerResult?.success) {
       showMessage(`注册失败: ${registerResult?.message || '未知错误'}`, 'error')
       return
@@ -210,7 +212,9 @@ const handleRegister = async () => {
           router.push('/chat')
         }, 1000)
       } else {
-        showMessage('自动登录时出现异常！', 'error')
+        if (loginResult) {
+          showMessage('自动登录时出现异常！', 'error')
+        }
       }
     } else {
       isRegisterRedirecting.value = true

@@ -164,7 +164,7 @@ const handleLogin = async () => {
       spinning.value = false
       router.push('/chat')
     }, 1000)
-  } else if (response?.data.code === 1006) {
+  } else if (response?.code === 1006) {
     showMessage('用户名或密码错误！', 'error')
   }
   isLogin.value = false

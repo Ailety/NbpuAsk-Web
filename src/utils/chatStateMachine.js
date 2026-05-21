@@ -2,6 +2,7 @@ export const CHAT_VIEW_STATE = Object.freeze({
   INITIALIZING: 'initializing',
   WELCOME: 'welcome',
   LOADING_CONVERSATION: 'loadingConversation',
+  CONVERSATION_ERROR: 'conversationError',
   READY: 'ready',
 })
 
@@ -13,6 +14,10 @@ export const CHAT_RUN_STATE = Object.freeze({
 
 export function isConversationLoadingState(state) {
   return state === CHAT_VIEW_STATE.LOADING_CONVERSATION
+}
+
+export function isConversationErrorState(state) {
+  return state === CHAT_VIEW_STATE.CONVERSATION_ERROR
 }
 
 export function isWelcomeState(state) {

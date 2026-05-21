@@ -90,7 +90,7 @@ export async function loginUser(username, password) {
     })
     return response.data
   } catch (error) {
-    handleError(error)
+    handleError(error, '登录失败，请稍后重试。')
     return null
   }
 }
@@ -100,7 +100,7 @@ export async function verifyRegister(registerData) {
     const response = await axios.post(getApiUrl('/verify/register'), registerData)
     return response.data
   } catch (error) {
-    handleError(error)
+    handleError(error, '注册信息校验失败，请稍后重试。')
     return null
   }
 }
@@ -110,7 +110,7 @@ export async function registerUser(registerData) {
     const response = await axios.post(getApiUrl('/user/register'), registerData)
     return response.data
   } catch (error) {
-    handleError(error)
+    handleError(error, '注册失败，请稍后重试。')
     return null
   }
 }
