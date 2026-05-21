@@ -58,6 +58,13 @@
       </div>
       <div class="footer">
         <p class="copyright-text">{{ copyrightText }}</p>
+        <a
+          target="_blank"
+          class="copyright-text"
+          style="text-decoration: none"
+          href="https://beian.miit.gov.cn/"
+          >浙ICP备2026033825号-1</a
+        >
       </div>
     </div>
     <AuthLoadingOverlay
@@ -157,10 +164,10 @@ const handleLogin = async () => {
       spinning.value = false
       router.push('/chat')
     }, 1000)
-  } else {
+  } else if (response?.data.code === 1006) {
     showMessage('用户名或密码错误！', 'error')
-    isLogin.value = false
   }
+  isLogin.value = false
 }
 </script>
 
@@ -372,12 +379,12 @@ const handleLogin = async () => {
 }
 
 .footer {
+  text-align: center;
   position: fixed;
   bottom: 1rem;
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  pointer-events: none;
 }
 
 .copyright-text {
